@@ -70,14 +70,16 @@ func main() {
 
 	wfds, wfdr := make(chan string), make(chan string)
 	ctx, cancelCtx := context.WithCancel(context.Background())
+	var listener *net.TCPListener
+	var conn *net.Conn
 
 	t := &Transfer{
 		WfdSendChan: wfds,
 		WfdRecvChan: wfdr,
-		Port:           port,
-		Peer:           peer,
-		Ctx:            ctx,
-		CancelCtx:      cancelCtx,
+		Port:        port,
+		Peer:        peer,
+		Ctx:         ctx,
+		CancelCtx:   cancelCtx,
 	}
 
 	// parse flags
@@ -125,6 +127,7 @@ func main() {
 
 	// cleanup
 	defer func() {
+		shutdownTCP(listener, conn, t)
 		resetWifi(t)
 	}()
 
@@ -135,6 +138,7 @@ func main() {
 		<-sigChan
 		t.output("Received interrupt signal, resetting WiFi and exiting.")
 		// t.CancelCtx()
+		shutdownTCP(listener, conn, t)
 		resetWifi(t)
 		os.Exit(45)
 	}(t)
@@ -166,10 +170,7 @@ func main() {
 			return
 		}
 		// make tcp connection
-		conn, err := dialPeer(t)
-		if conn != nil {
-			defer (*conn).Close()
-		}
+		conn, err = dialPeer(t)
 		if err != nil {
 			t.output(err.Error())
 			t.output("Could not establish TCP connection with peer. Aborting transfer.")
@@ -225,22 +226,7 @@ func main() {
 		}
 
 		// make tcp connection
-		listener, conn, err := listenForPeer(t)
-		// wait till end to close listener and tcp connection for multi-file transfers
-		// need to defer one func that closes both iff each != nil
-		defer func() {
-			if conn != nil {
-				if err := (*conn).Close(); err != nil {
-					t.output("Error closing TCP connection: " + err.Error())
-				}
-
-			}
-			if listener != nil {
-				if err := (*listener).Close(); err != nil {
-					t.output("Error closing TCP listener: " + err.Error())
-				}
-			}
-		}()
+		listener, conn, err = listenForPeer(t)
 
 		if err != nil {
 			t.output(err.Error())
@@ -358,4 +344,25 @@ func printUsage() {
 
 func (t *Transfer) output(msg string) {
 	fmt.Println(msg)
+}
+
+func shutdownTCP(listener *net.TCPListener, conn *net.Conn, t *Transfer) {
+	if conn != nil {
+		if err := (*conn).Close(); err != nil {
+			t.output("Error closing TCP connection: " + err.Error())
+		} else {
+			t.output("Closed TCP connection")
+		}
+	} else {
+		t.output("conn was nil")
+	}
+	if listener != nil {
+		if err := (*listener).Close(); err != nil {
+			t.output("Error closing TCP listener: " + err.Error())
+		} else {
+			t.output("Closed TCP listener")
+		}
+	} else {
+		t.output("listener was nil")
+	}
 }
